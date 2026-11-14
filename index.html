@@ -81,6 +81,7 @@
                 <i class="fa-solid fa-file-excel"></i> Cargar Excel
                 <input type="file" id="file-excel" accept=".xlsx,.xls,.csv" class="hidden">
             </label>
+            <button id="btn-restaurar-excel" type="button" onclick="restaurarExcelOriginal()" class="hidden px-3 py-2 bg-white hover:bg-stone-100 text-stone-700 text-xs font-semibold rounded-lg transition border border-stone-300" title="Olvidar el Excel que elegiste y volver al poligonos.xlsx del sitio"><i class="fa-solid fa-rotate-left"></i> Excel del sitio</button>
             <label class="px-4 py-2 bg-verde hover:bg-verde-dark text-ink text-xs font-semibold rounded-lg transition flex items-center gap-2 border border-dorado cursor-pointer" title="Elige un archivo .kml o .kmz creado en Google Earth para dibujarlo en el mapa">
                 <i class="fa-solid fa-earth-americas"></i> Cargar KML/KMZ
                 <input type="file" id="file-kml" accept=".kml,.kmz" class="hidden">
@@ -366,7 +367,7 @@
             paintDist();
             document.getElementById('file-excel').addEventListener('change', onExcelPicked);
             document.getElementById('file-kml').addEventListener('change', onKmlPicked);
-            cargarKmlPorDefecto();
+            cargarExcelInicial().finally(cargarKmlPorDefecto);   // primero el Excel, luego el KML para vincularlos
         });
 
         // ---------- Mapa ----------
@@ -1072,6 +1073,74 @@
             mostrarAviso('ok', 'Se quitó el KML: el mapa vuelve a mostrar los puntos del Excel.');
         }
 
+        // ---------- Excel fijo: se guarda en este navegador hasta que cargues otro ----------
+        const CLAVE_EXCEL = 'dashTerritorial.excelGuardado.v1';
+
+        function guardarExcel(nombre, hoja, rows) {
+            try {
+                localStorage.setItem(CLAVE_EXCEL, JSON.stringify({ nombre, hoja, rows, firmaSitio: firmaExcelSitio, guardado: new Date().toISOString() }));
+                return true;
+            } catch (e) {
+                console.warn('No se pudo guardar el Excel en el navegador:', e);
+                return false;
+            }
+        }
+
+        // Excel del sitio: "poligonos.xlsx" junto a este HTML (en GitHub Pages: súbelo al mismo repositorio)
+        const EXCEL_DEL_SITIO = 'poligonos.xlsx';
+        let firmaExcelSitio = null;   // identifica la versión del poligonos.xlsx que está en el sitio
+
+        function leerExcelGuardado() {
+            try {
+                const g = JSON.parse(localStorage.getItem(CLAVE_EXCEL) || 'null');
+                return (g && Array.isArray(g.rows) && g.rows.length) ? g : null;
+            } catch (e) { return null; }
+        }
+
+        // Al abrir: 1) lee poligonos.xlsx del sitio; 2) si tú cargaste otro a mano, ese se conserva
+        // mientras el del sitio no cambie; en cuanto subas uno nuevo a GitHub, manda el del sitio.
+        async function cargarExcelInicial() {
+            let sitio = null;
+            try {
+                if (typeof XLSX === 'undefined') throw new Error('no cargó la librería de Excel');
+                const resp = await fetch(EXCEL_DEL_SITIO, { cache: 'no-cache' });
+                if (resp.ok) {
+                    const buf = await resp.arrayBuffer();
+                    firmaExcelSitio = resp.headers.get('ETag') || resp.headers.get('Last-Modified') || ('tam' + buf.byteLength);
+                    const tabla = buscarTabla(XLSX.read(buf, { type: 'array' }));
+                    if (tabla.error) throw new Error(`${EXCEL_DEL_SITIO}: no encontré las columnas obligatorias (${COL_REQUERIDAS.join(', ')})`);
+                    const r = filasDesdeTabla(tabla);
+                    if (!r.rows.length) throw new Error(`${EXCEL_DEL_SITIO} no tiene registros`);
+                    sitio = { rows: r.rows, hoja: tabla.nombre };
+                } else if (resp.status !== 404) {
+                    throw new Error('HTTP ' + resp.status);
+                }
+            } catch (e) {
+                console.warn('No se pudo leer el Excel del sitio:', e);
+                mostrarAviso('warn', `<b>No pude leer ${esc(EXCEL_DEL_SITIO)} del sitio</b> (${esc(e.message || e)}). Se usan los datos que ya había.`);
+            }
+
+            const manual = leerExcelGuardado();
+            const manualVigente = manual && (!sitio || manual.firmaSitio === firmaExcelSitio);
+
+            if (manualVigente) {
+                aplicarNuevosDatos(manual.rows);
+                document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${manual.nombre} (elegido por ti)`;
+                document.getElementById('btn-restaurar-excel').classList.remove('hidden');
+            } else {
+                if (manual) { try { localStorage.removeItem(CLAVE_EXCEL); } catch (e) {} }   // el del sitio es más nuevo
+                if (sitio) {
+                    aplicarNuevosDatos(sitio.rows);
+                    document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${EXCEL_DEL_SITIO} (sitio)`;
+                }
+            }
+        }
+
+        function restaurarExcelOriginal() {
+            try { localStorage.removeItem(CLAVE_EXCEL); } catch (e) { /* sin almacenamiento: nada que borrar */ }
+            location.reload();
+        }
+
         async function onExcelPicked(ev) {
             const input = ev.target, archivo = input.files[0];
             if (!archivo) return;
@@ -1099,9 +1168,12 @@
                     return;
                 }
                 aplicarNuevosDatos(r.rows);
-                document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${archivo.name}`;
+                const quedoGuardado = guardarExcel(archivo.name, tabla.nombre, r.rows);
+                document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${archivo.name}` + (quedoGuardado ? ' (guardado)' : '');
+                if (quedoGuardado) document.getElementById('btn-restaurar-excel').classList.remove('hidden');
 
                 const notas = [];
+                if (!quedoGuardado) notas.push('no pude dejar el Excel guardado en este navegador, así que al recargar volverá a los datos originales');
                 if (r.sinCoord) notas.push(`${r.sinCoord} registro(s) sin coordenada válida (aparecen en la tabla pero no en el mapa)`);
                 if (r.faltantes.length) notas.push(`columnas opcionales no encontradas: ${esc(r.faltantes.join(', '))}`);
                 const dups = Object.values(folioCount).filter(c => c > 1).length;
