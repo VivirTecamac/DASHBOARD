@@ -359,6 +359,9 @@
         const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
         document.addEventListener('DOMContentLoaded', () => {
+            // Los datos que trae el HTML no vienen en orden: se ordenan por folio (igual que el Excel).
+            // Un Excel cargado (poligonos.xlsx o el que elijas) conserva SIEMPRE el orden de sus filas.
+            rawData.sort((a, b) => String(a.folio).localeCompare(String(b.folio), 'es', { numeric: true }));
             initMap();
             populateFilters();
             updateDashboard(rawData);
