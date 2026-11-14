@@ -373,7 +373,15 @@
             cargarExcelInicial()
                 .catch(e => { console.error(e); avisoExcelPendiente = ['error', `<b>Error al cargar el Excel del sitio:</b> ${esc(e.message || e)}`]; })
                 .then(cargarKmlPorDefecto)   // primero el Excel, luego el KML para vincularlos
-                .finally(() => { if (avisoExcelPendiente) mostrarAviso(...avisoExcelPendiente); });
+                .finally(() => {
+                    // Un solo aviso con las dos líneas: la del Excel y la del KML (el del KML lo habría tapado)
+                    if (!avisoExcelPendiente) return;
+                    const el = document.getElementById('load-status');
+                    const previo = (!el.classList.contains('hidden') && el.firstElementChild) ? el.firstElementChild.innerHTML : '';
+                    const [tipo, html] = avisoExcelPendiente;
+                    if (tipo === 'ok' && previo) el.firstElementChild.innerHTML = html + '<br>' + previo;
+                    else mostrarAviso(tipo, html + (previo ? '<br>' + previo : ''));
+                });
         });
 
         // ---------- Mapa ----------
@@ -1145,6 +1153,7 @@
                 if (sitio) {
                     aplicarNuevosDatos(sitio.rows);
                     document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${EXCEL_DEL_SITIO} (sitio, ${sitio.rows.length} polígonos)`;
+                    avisoExcelPendiente = ['ok', `<strong>Excel del sitio cargado:</strong> ${esc(EXCEL_DEL_SITIO)} (hoja "${esc(sitio.hoja)}") — ${sitio.rows.length} polígonos.`];
                 } else {
                     document.getElementById('kpi-poligonos-sub').innerText = 'Fuente: datos del HTML (no se leyó poligonos.xlsx)';
                 }
