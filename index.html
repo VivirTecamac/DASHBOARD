@@ -370,7 +370,10 @@
             paintDist();
             document.getElementById('file-excel').addEventListener('change', onExcelPicked);
             document.getElementById('file-kml').addEventListener('change', onKmlPicked);
-            cargarExcelInicial().finally(cargarKmlPorDefecto);   // primero el Excel, luego el KML para vincularlos
+            cargarExcelInicial()
+                .catch(e => { console.error(e); avisoExcelPendiente = ['error', `<b>Error al cargar el Excel del sitio:</b> ${esc(e.message || e)}`]; })
+                .then(cargarKmlPorDefecto)   // primero el Excel, luego el KML para vincularlos
+                .finally(() => { if (avisoExcelPendiente) mostrarAviso(...avisoExcelPendiente); });
         });
 
         // ---------- Mapa ----------
@@ -1104,9 +1107,14 @@
         // mientras el del sitio no cambie; en cuanto subas uno nuevo a GitHub, manda el del sitio.
         async function cargarExcelInicial() {
             let sitio = null;
+            const urlExcel = new URL(EXCEL_DEL_SITIO, location.href).href;
+            avisoExcelPendiente = null;
             try {
-                if (typeof XLSX === 'undefined') throw new Error('no cargó la librería de Excel');
+                if (typeof XLSX === 'undefined') throw new Error('no cargó la librería de Excel (revisa tu conexión a internet)');
                 const resp = await fetch(EXCEL_DEL_SITIO, { cache: 'no-cache' });
+                if (resp.status === 404) {
+                    avisoExcelPendiente = ['warn', `<b>No encontré el Excel del sitio.</b> Busqué en <a class="underline" href="${esc(urlExcel)}" target="_blank" rel="noopener">${esc(urlExcel)}</a> y no existe (error 404). El nombre debe ser exactamente <b>${EXCEL_DEL_SITIO}</b> en minúsculas y estar en la misma carpeta que index.html. Mientras tanto se usan los datos que trae el HTML.`];
+                }
                 if (resp.ok) {
                     const buf = await resp.arrayBuffer();
                     firmaExcelSitio = resp.headers.get('ETag') || resp.headers.get('Last-Modified') || ('tam' + buf.byteLength);
@@ -1120,7 +1128,9 @@
                 }
             } catch (e) {
                 console.warn('No se pudo leer el Excel del sitio:', e);
-                mostrarAviso('warn', `<b>No pude leer ${esc(EXCEL_DEL_SITIO)} del sitio</b> (${esc(e.message || e)}). Se usan los datos que ya había.`);
+                const local = location.protocol === 'file:'
+                    ? ' Estás abriendo el archivo directo desde la computadora: el navegador bloquea esa lectura; ábrelo desde la dirección de GitHub Pages.' : '';
+                avisoExcelPendiente = ['warn', `<b>No pude leer ${esc(EXCEL_DEL_SITIO)} del sitio</b> (${esc(e.message || e)}).${local} Se usan los datos que ya había.`];
             }
 
             const manual = leerExcelGuardado();
@@ -1134,10 +1144,13 @@
                 if (manual) { try { localStorage.removeItem(CLAVE_EXCEL); } catch (e) {} }   // el del sitio es más nuevo
                 if (sitio) {
                     aplicarNuevosDatos(sitio.rows);
-                    document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${EXCEL_DEL_SITIO} (sitio)`;
+                    document.getElementById('kpi-poligonos-sub').innerText = `Fuente: ${EXCEL_DEL_SITIO} (sitio, ${sitio.rows.length} polígonos)`;
+                } else {
+                    document.getElementById('kpi-poligonos-sub').innerText = 'Fuente: datos del HTML (no se leyó poligonos.xlsx)';
                 }
             }
         }
+        let avisoExcelPendiente = null;   // el aviso del KML lo taparía, así que se muestra al final
 
         function restaurarExcelOriginal() {
             try { localStorage.removeItem(CLAVE_EXCEL); } catch (e) { /* sin almacenamiento: nada que borrar */ }
